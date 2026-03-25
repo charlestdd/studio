@@ -3,75 +3,155 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mini Roblox Studio</title>
+    <title>Mini 3D Studio And Exporter</title>
     <style>
-        body { margin: 0; overflow: hidden; font-family: sans-serif; }
-        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; }
-        button { padding: 10px; cursor: pointer; background: #00a2ff; color: white; border: none; border-radius: 4px; }
+        body { margin: 0; overflow: hidden; font-family: sans-serif; background-color: #111; }
+        #ui { position: absolute; top: 10px; left: 10px; z-index: 10; display: flex; flex-direction: column; gap: 8px; }
+        button { padding: 10px 15px; cursor: pointer; background: #00a2ff; color: white; border: none; border-radius: 4px; font-weight: bold; }
+        button:hover { background: #0081cc; }
+        .controls-hint { color: #bbb; font-size: 11px; background: rgba(0,0,0,0.5); padding: 5px; border-radius: 4px; }
     </style>
 </head>
 <body>
-    <div id="ui">
-        <button onclick="spawnPart()">Insert Part</button>
+
+<div id="ui">
+    <button onclick="window.spawnPart()">Insert Part</button>
+    <button onclick="window.exportScene()" style="background:#28a745">Save Place (JSON)</button>
+    <div class="controls-hint">
+        <b>W</b>: Move | <b>E</b>: Rotate | <b>R</b>: Scale<br>
+        <b>Del</b>: Remove Selected
     </div>
+</div>
 
-    <script type="importmap">
-        {
-            "imports": {
-                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
-            }
+<script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
         }
-    </script>
+    }
+</script>
 
-    <script type="module">
-        import * as THREE from 'three';
-        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+<script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { TransformControls } from 'three/addons/controls/TransformControls.js';
+    import { GUI } from 'https://cdn.skypack.dev/dat.gui';
 
-        // --- Scene Setup ---
-        const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xa0a0a0);
+    // --- Setup ---
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x222222);
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(15, 15, 15);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    const transformControl = new TransformControls(camera, renderer.domElement);
+    scene.add(transformControl);
+
+    transformControl.addEventListener('dragging-changed', (event) => {
+        controls.enabled = !event.value;
+    });
+
+    // --- Environment ---
+    scene.add(new THREE.GridHelper(100, 100, 0x888888, 0x444444));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+    const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+    dirLight.position.set(10, 20, 10);
+    scene.add(dirLight);
+
+    // --- State ---
+    let studioObjects = [];
+    const gui = new GUI({ title: 'Studio Panels' });
+    const propsFolder = gui.addFolder('Properties');
+    const explorerFolder = gui.addFolder('Explorer');
+
+    // --- Keyboard Shortcuts ---
+    window.addEventListener('keydown', (event) => {
+        switch (event.key.toLowerCase()) {
+            case 'w': transformControl.setMode('translate'); break;
+            case 'e': transformControl.setMode('rotate'); break;
+            case 'r': transformControl.setMode('scale'); break;
+            case 'delete': 
+                if (transformControl.object) {
+                    const obj = transformControl.object;
+                    scene.remove(obj);
+                    studioObjects = studioObjects.filter(item => item !== obj);
+                    transformControl.detach();
+                    updateExplorer();
+                }
+                break;
+        }
+    });
+
+    // --- Functions ---
+    window.spawnPart = () => {
+        const geometry = new THREE.BoxGeometry(2, 2, 2);
+        const material = new THREE.MeshStandardMaterial({ color: 0x00a2ff });
+        const part = new THREE.Mesh(geometry, material);
+        part.name = "Part_" + (studioObjects.length + 1);
         
-        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        camera.position.set(10, 10, 10);
+        scene.add(part);
+        studioObjects.push(part);
+        updateExplorer();
+        selectObject(part);
+    };
 
-        const renderer = new THREE.WebGLRenderer({ antialias: true });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        document.body.appendChild(renderer.domElement);
+    function selectObject(obj) {
+        transformControl.attach(obj);
+        updateProperties(obj);
+    }
 
-        // --- Lighting & Grid ---
-        const light = new THREE.DirectionalLight(0xffffff, 3);
-        light.position.set(5, 10, 7.5);
-        scene.add(light);
-        scene.add(new THREE.AmbientLight(0x404040));
+    function updateProperties(obj) {
+        for (let controller of propsFolder.__controllers.slice()) propsFolder.remove(controller);
+        propsFolder.add(obj, 'name').onChange(() => updateExplorer());
+        const colorObj = { color: '#' + obj.material.color.getHexString() };
+        propsFolder.addColor(colorObj, 'color').onChange(val => obj.material.color.set(val));
+        propsFolder.add(obj.scale, 'x', 0.1, 10).name('Scale X');
+        propsFolder.add(obj.scale, 'y', 0.1, 10).name('Scale Y');
+        propsFolder.add(obj.scale, 'z', 0.1, 10).name('Scale Z');
+        propsFolder.open();
+    }
 
-        const grid = new THREE.GridHelper(100, 100);
-        scene.add(grid);
-
-        const controls = new OrbitControls(camera, renderer.domElement);
-
-        // --- Logic ---
-        window.spawnPart = () => {
-            const geometry = new THREE.BoxGeometry(2, 2, 2);
-            const material = new THREE.MeshStandardMaterial({ color: 0x00ff00 });
-            const cube = new THREE.Mesh(geometry, material);
-            cube.position.y = 1; // Sit on the grid
-            scene.add(cube);
-        };
-
-        function animate() {
-            requestAnimationFrame(animate);
-            controls.update();
-            renderer.render(scene, camera);
-        }
-
-        window.addEventListener('resize', () => {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
+    function updateExplorer() {
+        for (let controller of explorerFolder.__controllers.slice()) explorerFolder.remove(controller);
+        studioObjects.forEach(obj => {
+            explorerFolder.add({ select: () => selectObject(obj) }, 'select').name(obj.name);
         });
+        explorerFolder.open();
+    }
 
-        animate();
-    </script>
+    window.exportScene = () => {
+        const data = studioObjects.map(obj => ({
+            name: obj.name,
+            pos: obj.position,
+            scale: obj.scale,
+            rotation: { x: obj.rotation.x, y: obj.rotation.y, z: obj.rotation.z },
+            color: obj.material.color.getHex()
+        }));
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = 'my_roblox_place.json';
+        link.click();
+    };
+
+    function animate() {
+        requestAnimationFrame(animate);
+        renderer.render(scene, camera);
+    }
+
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    animate();
+</script>
 </body>
 </html>
